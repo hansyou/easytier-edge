@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --target wasm32-unknown-unknown
+
+      - name: Build WebAssembly core
+        run: pnpm run build:wasm
+
+      - name: Type-check
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+  deploy:
+      name: Deploy to Cloudflare
+      needs: verify
+      runs-on: ubuntu-latest
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      timeout-minutes: 20
+  
+      steps:
+        - name: Check out repository
+          uses: actions/checkout@v6
+  
+        - name: Set up pnpm
+          uses: pnpm/action-setup@v6
+  
+        - name: Set up Node.js
+          uses: actions/setup-node@v7
+          with:
+            node-version: 24
+            cache: pnpm
+  
+        - name: Install dependencies
+          run: pnpm install --frozen-lockfile
+  
+        - name: Install Rust toolchain
+          run: rustup toolchain install 1.95.0 --profile minimal --target wasm32-unknown-unknown
+  
+        - name: Build WebAssembly core
+          run: pnpm run build:wasm
+  
+        - name: Deploy Worker
+          uses: cloudflare/wrangler-action@v3
+          with:
+            apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+            accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+            command: deploy
+            secrets: |
+              EASYTIER_NETWORKS
+              LOCAL_PRIVATE_KEY
+              LOCAL_PUBLIC_KEY
+          env:
+            EASYTIER_NETWORKS: ${{ secrets.EASYTIER_NETWORKS }}
+            LOCAL_PRIVATE_KEY: ${{ secrets.LOCAL_PRIVATE_KEY }}
+            LOCAL_PUBLIC_KEY: ${{ secrets.LOCAL_PUBLIC_KEY }}
